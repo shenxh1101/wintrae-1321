@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import { success, fail, paginated } from '../utils/response';
 import { getOne, getAll } from '../database';
 import { parseIntParam } from '../utils/helpers';
@@ -17,7 +17,7 @@ router.get('/stores', async (req: Request, res: Response) => {
       params.push(status);
     }
 
-    const stores = await getAll<any>(
+    const stores = getAll<any>(
       `SELECT * FROM stores ${whereClause} ORDER BY name ASC`,
       params
     );
@@ -64,12 +64,12 @@ router.get('/courses', async (req: Request, res: Response) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM courses c ${whereClause}`,
       params
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT c.* FROM courses c ${whereClause} ORDER BY c.name ASC LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
@@ -99,7 +99,7 @@ router.get('/courses/:id', async (req: Request, res: Response) => {
   try {
     const courseId = req.params.id;
 
-    const course = await getOne<any>(
+    const course = getOne<any>(
       `SELECT * FROM courses WHERE id = ?`,
       [courseId]
     );
@@ -108,7 +108,7 @@ router.get('/courses/:id', async (req: Request, res: Response) => {
       return fail(res, '课程不存在', 404, 404);
     }
 
-    const upcomingSchedules = await getAll<any>(
+    const upcomingSchedules = getAll<any>(
       `SELECT cs.*, co.name as coach_name, co.avatar as coach_avatar, s.name as store_name
        FROM coach_schedules cs
        INNER JOIN coaches co ON cs.coach_id = co.id
@@ -175,12 +175,12 @@ router.get('/coaches', async (req: Request, res: Response) => {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM coaches ${whereClause}`,
       params
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT * FROM coaches ${whereClause} ORDER BY rating DESC, name ASC LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
@@ -210,7 +210,7 @@ router.get('/coaches/:id', async (req: Request, res: Response) => {
   try {
     const coachId = req.params.id;
 
-    const coach = await getOne<any>(
+    const coach = getOne<any>(
       `SELECT * FROM coaches WHERE id = ?`,
       [coachId]
     );
@@ -219,7 +219,7 @@ router.get('/coaches/:id', async (req: Request, res: Response) => {
       return fail(res, '教练不存在', 404, 404);
     }
 
-    const reviewStats = await getOne<any>(
+    const reviewStats = getOne<any>(
       `SELECT COUNT(*) as total_reviews, AVG(rating) as avg_rating FROM reviews WHERE coach_id = ?`,
       [coachId]
     );
@@ -294,14 +294,14 @@ router.get('/schedules', async (req: Request, res: Response) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(DISTINCT cs.id) as total FROM coach_schedules cs
        INNER JOIN courses c ON cs.course_id = c.id
        ${whereClause}`,
       params
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT cs.*, c.name as course_name, c.type as course_type, c.duration, c.difficulty, c.calories, c.cover_image,
               co.name as coach_name, co.avatar as coach_avatar, co.title as coach_title,
               s.name as store_name, s.address as store_address, s.phone as store_phone
@@ -362,7 +362,7 @@ router.get('/schedules/:id', async (req: Request, res: Response) => {
   try {
     const scheduleId = req.params.id;
 
-    const schedule = await getOne<any>(
+    const schedule = getOne<any>(
       `SELECT cs.*, c.name as course_name, c.type as course_type, c.duration, c.difficulty, c.calories, c.cover_image, c.description as course_description,
               co.name as coach_name, co.avatar as coach_avatar, co.title as coach_title, co.introduction as coach_introduction, co.rating as coach_rating,
               s.name as store_name, s.address as store_address, s.phone as store_phone, s.business_hours
@@ -378,7 +378,7 @@ router.get('/schedules/:id', async (req: Request, res: Response) => {
       return fail(res, '排班不存在', 404, 404);
     }
 
-    const waitlistPosition = await getOne<any>(
+    const waitlistPosition = getOne<any>(
       `SELECT COUNT(*) as count FROM bookings WHERE schedule_id = ? AND is_waitlist = 1 AND status = 'waitlisted'`,
       [scheduleId]
     );
@@ -451,7 +451,7 @@ router.get('/coaches/:id/schedules', async (req: Request, res: Response) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT cs.*, c.name as course_name, c.type as course_type, s.name as store_name
        FROM coach_schedules cs
        INNER JOIN courses c ON cs.course_id = c.id

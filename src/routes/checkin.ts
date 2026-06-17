@@ -1,9 +1,9 @@
-import { Router, Response } from 'express';
+﻿import { Router, Response } from 'express';
 import dayjs from 'dayjs';
 import { v4 as uuidv4 } from 'uuid';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { success, fail, paginated } from '../utils/response';
-import { getOne, getAll, runSQL, beginTransaction, commit, rollback } from '../database';
+import { getOne, getAll, runSQL, transaction } from '../database';
 import { changePoints, createNotification, parseIntParam, generateCheckInCode } from '../utils/helpers';
 import { config } from '../config';
 
@@ -21,7 +21,7 @@ router.post('/verify', authMiddleware, async (req: AuthRequest, res: Response) =
     let booking: any;
 
     if (checkInCode) {
-      booking = await getOne<any>(
+      booking = getOne<any>(
         `SELECT b.*, cs.date, cs.start_time, cs.end_time, cs.capacity, c.name as course_name, s.name as store_name
          FROM bookings b
          INNER JOIN coach_schedules cs ON b.schedule_id = cs.id
@@ -31,7 +31,7 @@ router.post('/verify', authMiddleware, async (req: AuthRequest, res: Response) =
         [checkInCode, memberId]
       );
     } else if (scheduleId) {
-      booking = await getOne<any>(
+      booking = getOne<any>(
         `SELECT b.*, cs.date, cs.start_time, cs.end_time, cs.capacity, c.name as course_name, s.name as store_name
          FROM bookings b
          INNER JOIN coach_schedules cs ON b.schedule_id = cs.id
@@ -69,38 +69,31 @@ router.post('/verify', authMiddleware, async (req: AuthRequest, res: Response) =
       return fail(res, '课程已结束，无法签到');
     }
 
-    await beginTransaction();
+    const checkInTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
 
-    try {
-      const checkInTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
-
-      await runSQL(
+    transaction(() => {
+      runSQL(
         `UPDATE bookings SET status = 'checked_in', check_in_time = ? WHERE id = ?`,
         [checkInTime, booking.id]
       );
+    });
 
-      await commit();
+    changePoints(
+      memberId,
+      5,
+      'check_in',
+      `${booking.date} ${booking.start_time} ${booking.course_name}签到成功`,
+      booking.id
+    );
 
-      await changePoints(
-        memberId,
-        5,
-        'check_in',
-        `${booking.date} ${booking.start_time} ${booking.course_name}签到成功`,
-        booking.id
-      );
-
-      return success(res, {
-        bookingId: booking.id,
-        status: 'checked_in',
-        checkInTime,
-        isLate,
-        pointsEarned: 5,
-        message: isLate ? '签到成功（迟到）' : '签到成功'
-      }, '签到成功');
-    } catch (txErr) {
-      await rollback();
-      throw txErr;
-    }
+    return success(res, {
+      bookingId: booking.id,
+      status: 'checked_in',
+      checkInTime,
+      isLate,
+      pointsEarned: 5,
+      message: isLate ? '签到成功（迟到）' : '签到成功'
+    }, '签到成功');
   } catch (err: any) {
     return fail(res, err.message || '签到失败');
   }
@@ -117,7 +110,7 @@ router.post('/frontdesk/verify', async (req: AuthRequest, res: Response) => {
     let booking: any;
 
     if (checkInCode) {
-      booking = await getOne<any>(
+      booking = getOne<any>(
         `SELECT b.*, m.name as member_name, m.phone as member_phone,
                 cs.date, cs.start_time, cs.end_time, cs.capacity,
                 c.name as course_name, s.name as store_name, co.name as coach_name
@@ -131,7 +124,7 @@ router.post('/frontdesk/verify', async (req: AuthRequest, res: Response) => {
         [checkInCode]
       );
     } else if (scheduleId && memberPhone) {
-      booking = await getOne<any>(
+      booking = getOne<any>(
         `SELECT b.*, m.name as member_name, m.phone as member_phone,
                 cs.date, cs.start_time, cs.end_time, cs.capacity,
                 c.name as course_name, s.name as store_name, co.name as coach_name
@@ -168,50 +161,43 @@ router.post('/frontdesk/verify', async (req: AuthRequest, res: Response) => {
       return fail(res, '课程已结束，无法签到');
     }
 
-    await beginTransaction();
+    const checkInTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
 
-    try {
-      const checkInTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
-
-      await runSQL(
+    transaction(() => {
+      runSQL(
         `UPDATE bookings SET status = 'checked_in', check_in_time = ? WHERE id = ?`,
         [checkInTime, booking.id]
       );
+    });
 
-      await commit();
+    changePoints(
+      booking.member_id,
+      5,
+      'check_in',
+      `${booking.date} ${booking.start_time} ${booking.course_name}签到成功`,
+      booking.id
+    );
 
-      await changePoints(
-        booking.member_id,
-        5,
-        'check_in',
-        `${booking.date} ${booking.start_time} ${booking.course_name}签到成功`,
-        booking.id
-      );
-
-      return success(res, {
-        bookingId: booking.id,
-        member: {
-          id: booking.member_id,
-          name: booking.member_name,
-          phone: booking.member_phone
-        },
-        course: {
-          name: booking.course_name,
-          date: booking.date,
-          startTime: booking.start_time,
-          endTime: booking.end_time,
-          coach: booking.coach_name,
-          store: booking.store_name
-        },
-        status: 'checked_in',
-        checkInTime,
-        isLate,
-        pointsEarned: 5
-      }, '签到成功');
-    } catch (txErr) {
-      await rollback();
-      throw txErr;
-    }
+    return success(res, {
+      bookingId: booking.id,
+      member: {
+        id: booking.member_id,
+        name: booking.member_name,
+        phone: booking.member_phone
+      },
+      course: {
+        name: booking.course_name,
+        date: booking.date,
+        startTime: booking.start_time,
+        endTime: booking.end_time,
+        coach: booking.coach_name,
+        store: booking.store_name
+      },
+      status: 'checked_in',
+      checkInTime,
+      isLate,
+      pointsEarned: 5
+    }, '签到成功');
   } catch (err: any) {
     return fail(res, err.message || '签到失败');
   }
@@ -225,7 +211,7 @@ router.post('/mark-no-show', async (req: AuthRequest, res: Response) => {
       return fail(res, '排班ID不能为空');
     }
 
-    const schedule = await getOne<any>(
+    const schedule = getOne<any>(
       `SELECT cs.* FROM coach_schedules cs WHERE cs.id = ?`,
       [scheduleId]
     );
@@ -239,7 +225,7 @@ router.post('/mark-no-show', async (req: AuthRequest, res: Response) => {
       return fail(res, '课程尚未结束，无法标记爽约');
     }
 
-    const noShowBookings = await getAll<any>(
+    const noShowBookings = getAll<any>(
       `SELECT b.*, m.name as member_name, c.name as course_name FROM bookings b
        INNER JOIN members m ON b.member_id = m.id
        INNER JOIN coach_schedules cs ON b.schedule_id = cs.id
@@ -251,28 +237,23 @@ router.post('/mark-no-show', async (req: AuthRequest, res: Response) => {
     const markedCount = noShowBookings.length;
 
     for (const booking of noShowBookings) {
-      await beginTransaction();
-      try {
-        await runSQL(
+      transaction(() => {
+        runSQL(
           `UPDATE bookings SET status = 'no_show' WHERE id = ?`,
           [booking.id]
         );
-        await commit();
+      });
 
-        await changePoints(
-          booking.member_id,
-          -config.noShowPenaltyPoints,
-          'no_show',
-          `${booking.date} ${booking.start_time} ${booking.course_name}未到店（爽约），扣除${config.noShowPenaltyPoints}积分`,
-          booking.id
-        );
-      } catch (txErr) {
-        await rollback();
-        console.error(`标记爽约失败 bookingId=${booking.id}:`, txErr);
-      }
+      changePoints(
+        booking.member_id,
+        -config.noShowPenaltyPoints,
+        'no_show',
+        `${booking.date} ${booking.start_time} ${booking.course_name}未到店（爽约），扣除${config.noShowPenaltyPoints}积分`,
+        booking.id
+      );
     }
 
-    await runSQL(
+    runSQL(
       `UPDATE coach_schedules SET status = 'completed' WHERE id = ?`,
       [scheduleId]
     );
@@ -309,12 +290,12 @@ router.get('/today-list', async (req: AuthRequest, res: Response) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM bookings b INNER JOIN coach_schedules cs ON b.schedule_id = cs.id ${whereClause}`,
       params
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT b.*, m.name as member_name, m.phone as member_phone, m.avatar as member_avatar,
               cs.date, cs.start_time, cs.end_time,
               c.name as course_name, s.name as store_name, co.name as coach_name
@@ -330,7 +311,7 @@ router.get('/today-list', async (req: AuthRequest, res: Response) => {
       [...params, pageSize, offset]
     );
 
-    const stats = await getOne<any>(
+    const stats = getOne<any>(
       `SELECT
         SUM(CASE WHEN b.status = 'booked' THEN 1 ELSE 0 END) as booked_count,
         SUM(CASE WHEN b.status = 'checked_in' OR b.status = 'completed' THEN 1 ELSE 0 END) as checked_in_count,
@@ -380,7 +361,7 @@ router.get('/schedule/:id/stats', async (req: AuthRequest, res: Response) => {
   try {
     const scheduleId = req.params.id;
 
-    const schedule = await getOne<any>(
+    const schedule = getOne<any>(
       `SELECT cs.*, c.name as course_name, s.name as store_name FROM coach_schedules cs
        INNER JOIN courses c ON cs.course_id = c.id
        INNER JOIN stores s ON cs.store_id = s.id
@@ -392,7 +373,7 @@ router.get('/schedule/:id/stats', async (req: AuthRequest, res: Response) => {
       return fail(res, '排班不存在');
     }
 
-    const bookingStats = await getOne<any>(
+    const bookingStats = getOne<any>(
       `SELECT
         SUM(CASE WHEN status = 'booked' THEN 1 ELSE 0 END) as booked_count,
         SUM(CASE WHEN status IN ('checked_in', 'completed') THEN 1 ELSE 0 END) as checked_in_count,

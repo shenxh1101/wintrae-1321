@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+﻿import { Router, Response } from 'express';
 import dayjs from 'dayjs';
 import { v4 as uuidv4 } from 'uuid';
 import { AuthRequest, authMiddleware, optionalAuthMiddleware } from '../middleware/auth';
@@ -22,7 +22,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
     }
 
     const booking = getOne<any>(
-      `SELECT b.*, cs.coach_id, cs.schedule_id, cs.date, cs.start_time, cs.end_time,
+      `SELECT b.*, cs.coach_id, cs.date, cs.start_time, cs.end_time,
               c.id as course_id, c.name as course_name, c.type as course_type, c.duration,
               co.name as coach_name, co.avatar as coach_avatar,
               s.name as store_name
@@ -142,12 +142,12 @@ router.get('/schedule/:scheduleId', optionalAuthMiddleware, async (req: AuthRequ
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM reviews r ${whereClause}`,
       params
     );
 
-    const stats = await getOne<any>(
+    const stats = getOne<any>(
       `SELECT
         COUNT(*) as total_reviews,
         AVG(rating) as avg_rating,
@@ -160,7 +160,7 @@ router.get('/schedule/:scheduleId', optionalAuthMiddleware, async (req: AuthRequ
       [scheduleId]
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT r.*, m.name as member_name, m.avatar as member_avatar, c.name as course_name
        FROM reviews r
        INNER JOIN members m ON r.member_id = m.id
@@ -211,12 +211,12 @@ router.get('/coach/:coachId', optionalAuthMiddleware, async (req: AuthRequest, r
     const pageSize = parseIntParam(req.query.pageSize, 10) || 10;
     const offset = (page - 1) * pageSize;
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM reviews WHERE coach_id = ?`,
       [coachId]
     );
 
-    const stats = await getOne<any>(
+    const stats = getOne<any>(
       `SELECT
         COUNT(*) as total_reviews,
         AVG(rating) as avg_rating,
@@ -225,7 +225,7 @@ router.get('/coach/:coachId', optionalAuthMiddleware, async (req: AuthRequest, r
       [coachId]
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT r.*, m.name as member_name, m.avatar as member_avatar,
               c.name as course_name, cs.date, cs.start_time
        FROM reviews r
@@ -271,17 +271,17 @@ router.get('/coach/:coachId', optionalAuthMiddleware, async (req: AuthRequest, r
 
 router.get('/my', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
     const page = parseIntParam(req.query.page, 1) || 1;
     const pageSize = parseIntParam(req.query.pageSize, 10) || 10;
     const offset = (page - 1) * pageSize;
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM reviews WHERE member_id = ?`,
       [memberId]
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT r.*, c.name as course_name, co.name as coach_name,
               cs.date, cs.start_time, s.name as store_name
        FROM reviews r
@@ -326,9 +326,9 @@ router.get('/my', authMiddleware, async (req: AuthRequest, res: Response) => {
 
 router.get('/pending', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT b.id as booking_id, cs.date, cs.start_time, cs.end_time,
               c.name as course_name, c.type as course_type, co.name as coach_name, s.name as store_name
        FROM bookings b

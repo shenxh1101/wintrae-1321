@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+﻿import { Router, Response } from 'express';
 import dayjs from 'dayjs';
 import { AuthRequest } from '../middleware/auth';
 import { success, fail } from '../utils/response';
@@ -163,7 +163,7 @@ router.get('/occupancy/daily', async (req: AuthRequest, res: Response) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const dailyStats = await getAll<any>(
+    const dailyStats = getAll<any>(
       `SELECT
         cs.date as date,
         COUNT(DISTINCT cs.id) as class_count,
@@ -215,7 +215,7 @@ router.get('/attendance/daily', async (req: AuthRequest, res: Response) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const dailyStats = await getAll<any>(
+    const dailyStats = getAll<any>(
       `SELECT
         cs.date as date,
         COUNT(DISTINCT cs.id) as class_count,
@@ -268,7 +268,7 @@ router.get('/courses/ranking', async (req: AuthRequest, res: Response) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const courseRanking = await getAll<any>(
+    const courseRanking = getAll<any>(
       `SELECT
         c.id as course_id,
         c.name as course_name,
@@ -330,7 +330,7 @@ router.get('/coaches/ranking', async (req: AuthRequest, res: Response) => {
 
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-    const coachRanking = await getAll<any>(
+    const coachRanking = getAll<any>(
       `SELECT
         co.id as coach_id,
         co.name as coach_name,
@@ -378,7 +378,7 @@ router.get('/stores/summary', async (req: AuthRequest, res: Response) => {
     const startDate = req.query.startDate as string || dayjs().subtract(30, 'day').format('YYYY-MM-DD');
     const endDate = req.query.endDate as string || dayjs().format('YYYY-MM-DD');
 
-    const storeStats = await getAll<any>(
+    const storeStats = getAll<any>(
       `SELECT
         s.id as store_id,
         s.name as store_name,
@@ -426,8 +426,31 @@ router.get('/reviews/summary', async (req: AuthRequest, res: Response) => {
   try {
     const startDate = req.query.startDate as string || dayjs().subtract(30, 'day').format('YYYY-MM-DD');
     const endDate = req.query.endDate as string || dayjs().format('YYYY-MM-DD');
+    const storeId = req.query.storeId as string;
 
-    const summary = await getOne<any>(
+    const startTime = dayjs(startDate).startOf('day').format('YYYY-MM-DD HH:mm:ss');
+    const endTime = dayjs(endDate).endOf('day').format('YYYY-MM-DD HH:mm:ss');
+
+    let summaryConditions: string[] = [`r.created_at >= ? AND r.created_at <= ?`];
+    let summaryParams: any[] = [startTime, endTime];
+
+    if (storeId) {
+      summaryConditions.push(`EXISTS (SELECT 1 FROM coach_schedules cs WHERE cs.id = r.schedule_id AND cs.store_id = ?)`);
+      summaryParams.push(storeId);
+    }
+
+    let recentConditions: string[] = [`r.created_at >= ? AND r.created_at <= ?`];
+    let recentParams: any[] = [startTime, endTime];
+
+    if (storeId) {
+      recentConditions.push(`cs.store_id = ?`);
+      recentParams.push(storeId);
+    }
+
+    const summaryWhere = `WHERE ${summaryConditions.join(' AND ')}`;
+    const recentWhere = `WHERE ${recentConditions.join(' AND ')}`;
+
+    const summary = getOne<any>(
       `SELECT
         COUNT(*) as total_reviews,
         AVG(rating) as avg_rating,
@@ -436,37 +459,49 @@ router.get('/reviews/summary', async (req: AuthRequest, res: Response) => {
         SUM(CASE WHEN rating = 3 THEN 1 ELSE 0 END) as count_3,
         SUM(CASE WHEN rating = 2 THEN 1 ELSE 0 END) as count_2,
         SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) as count_1
-       FROM reviews
-       WHERE created_at >= ? AND created_at <= ?`,
-      [
-        dayjs(startDate).startOf('day').format('YYYY-MM-DD HH:mm:ss'),
-        dayjs(endDate).endOf('day').format('YYYY-MM-DD HH:mm:ss')
-      ]
+       FROM reviews r
+       ${summaryWhere}`,
+      summaryParams
     );
 
-    const recentReviews = await getAll<any>(
-      `SELECT r.*, m.name as member_name, c.name as course_name, co.name as coach_name
+    const recentReviews = getAll<any>(
+      `SELECT r.*, m.name as member_name, c.name as course_name, co.name as coach_name,
+              cs.store_id, s.name as store_name
        FROM reviews r
        INNER JOIN members m ON r.member_id = m.id
        INNER JOIN coach_schedules cs ON r.schedule_id = cs.id
        INNER JOIN courses c ON cs.course_id = c.id
        INNER JOIN coaches co ON r.coach_id = co.id
-       WHERE r.created_at >= ? AND r.created_at <= ?
+       INNER JOIN stores s ON cs.store_id = s.id
+       ${recentWhere}
        ORDER BY r.created_at DESC
        LIMIT 10`,
-      [
-        dayjs(startDate).startOf('day').format('YYYY-MM-DD HH:mm:ss'),
-        dayjs(endDate).endOf('day').format('YYYY-MM-DD HH:mm:ss')
-      ]
+      recentParams
     );
+
+    let storeInfo: any = null;
+    if (storeId) {
+      storeInfo = getOne<any>(
+        `SELECT id, name, address FROM stores WHERE id = ?`,
+        [storeId]
+      );
+    }
 
     return success(res, {
       period: { startDate, endDate },
+      filter: {
+        scope: storeId ? '指定门店' : '全部门店',
+        store: storeInfo ? {
+          id: storeInfo.id,
+          name: storeInfo.name,
+          address: storeInfo.address
+        } : null
+      },
       summary: {
         totalReviews: summary?.total_reviews || 0,
         avgRating: Math.round((summary?.avg_rating || 0) * 10) / 10,
         goodRate: summary?.total_reviews > 0
-          ? Math.round(((summary?.count_5 + summary?.count_4) / summary?.total_reviews) * 100)
+          ? Math.round(((summary?.count_5 || 0) + (summary?.count_4 || 0)) / (summary?.total_reviews || 1) * 100)
           : 0,
         distribution: {
           5: summary?.count_5 || 0,
@@ -480,10 +515,15 @@ router.get('/reviews/summary', async (req: AuthRequest, res: Response) => {
         id: item.id,
         rating: item.rating,
         content: item.content,
+        images: item.images ? item.images.split(',') : [],
         createdAt: item.created_at,
         member: { name: item.member_name },
         course: { name: item.course_name },
-        coach: { name: item.coach_name }
+        coach: { name: item.coach_name },
+        store: {
+          id: item.store_id,
+          name: item.store_name
+        }
       }))
     });
   } catch (err: any) {

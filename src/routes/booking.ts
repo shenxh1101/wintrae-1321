@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+﻿import { Router, Response } from 'express';
 import dayjs from 'dayjs';
 import { v4 as uuidv4 } from 'uuid';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
@@ -241,7 +241,7 @@ router.post('/:id/cancel', authMiddleware, async (req: AuthRequest, res: Respons
           [memberId]
         );
 
-        const promoted = processWaitlistPromotion(scheduleId, 1);
+        const promoted = processWaitlistPromotion(scheduleId, booking.capacity);
         if (promoted > 0) {
           const updatedSchedule = getOne<any>(
             `SELECT cs.booked_count, cs.waitlist_count FROM coach_schedules cs WHERE cs.id = ?`,

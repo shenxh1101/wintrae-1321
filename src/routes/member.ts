@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import * as bcrypt from 'bcryptjs';
 import dayjs from 'dayjs';
 import { v4 as uuidv4 } from 'uuid';
@@ -19,7 +19,7 @@ router.post('/login', async (req: Request, res: Response) => {
       return fail(res, '手机号和密码不能为空');
     }
 
-    const member = await getOne<any>(
+    const member = getOne<any>(
       `SELECT * FROM members WHERE phone = ?`,
       [phone]
     );
@@ -63,9 +63,9 @@ router.post('/login', async (req: Request, res: Response) => {
 
 router.get('/profile', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
 
-    const member = await getOne<any>(
+    const member = getOne<any>(
       `SELECT * FROM members WHERE id = ?`,
       [memberId]
     );
@@ -77,7 +77,7 @@ router.get('/profile', authMiddleware, async (req: AuthRequest, res: Response) =
     const startOfWeek = dayjs().startOf('week').format('YYYY-MM-DD HH:mm:ss');
     const endOfWeek = dayjs().endOf('week').format('YYYY-MM-DD HH:mm:ss');
 
-    const weeklyBookingCount = await getOne<any>(
+    const weeklyBookingCount = getOne<any>(
       `SELECT COUNT(*) as count FROM bookings WHERE member_id = ? AND status = 'booked' AND created_at >= ? AND created_at <= ?`,
       [memberId, startOfWeek, endOfWeek]
     );
@@ -111,9 +111,9 @@ router.get('/profile', authMiddleware, async (req: AuthRequest, res: Response) =
 
 router.get('/remaining', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
 
-    const member = await getOne<any>(
+    const member = getOne<any>(
       `SELECT remaining_count, total_count, membership_type, membership_start, membership_end, points FROM members WHERE id = ?`,
       [memberId]
     );
@@ -122,13 +122,13 @@ router.get('/remaining', authMiddleware, async (req: AuthRequest, res: Response)
       return fail(res, '会员不存在');
     }
 
-    const activeBookings = await getOne<any>(
+    const activeBookings = getOne<any>(
       `SELECT COUNT(*) as count FROM bookings WHERE member_id = ? AND status IN ('booked', 'waitlisted')`,
       [memberId]
     );
 
     const todayStart = dayjs().format('YYYY-MM-DD');
-    const todayBookings = await getOne<any>(
+    const todayBookings = getOne<any>(
       `SELECT COUNT(*) as count FROM bookings b
        INNER JOIN coach_schedules cs ON b.schedule_id = cs.id
        WHERE b.member_id = ? AND b.status IN ('booked', 'checked_in', 'completed') AND cs.date = ?`,
@@ -154,7 +154,7 @@ router.get('/remaining', authMiddleware, async (req: AuthRequest, res: Response)
 
 router.get('/booking-history', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
     const page = parseIntParam(req.query.page, 1) || 1;
     const pageSize = parseIntParam(req.query.pageSize, 10) || 10;
     const status = req.query.status as string;
@@ -168,12 +168,12 @@ router.get('/booking-history', authMiddleware, async (req: AuthRequest, res: Res
       params.push(status);
     }
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM bookings b ${whereClause}`,
       params
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT b.*, cs.date, cs.start_time, cs.end_time, cs.capacity,
               c.name as course_name, c.type as course_type, c.duration, c.difficulty, c.calories,
               co.name as coach_name, co.avatar as coach_avatar, co.title as coach_title,
@@ -232,22 +232,22 @@ router.get('/booking-history', authMiddleware, async (req: AuthRequest, res: Res
 
 router.get('/points-records', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
     const page = parseIntParam(req.query.page, 1) || 1;
     const pageSize = parseIntParam(req.query.pageSize, 10) || 10;
     const offset = (page - 1) * pageSize;
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM points_records WHERE member_id = ?`,
       [memberId]
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT * FROM points_records WHERE member_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       [memberId, pageSize, offset]
     );
 
-    const member = await getOne<any>(`SELECT points FROM members WHERE id = ?`, [memberId]);
+    const member = getOne<any>(`SELECT points FROM members WHERE id = ?`, [memberId]);
 
     return success(res, {
       total: countResult?.total || 0,
@@ -270,7 +270,7 @@ router.get('/points-records', authMiddleware, async (req: AuthRequest, res: Resp
 
 router.get('/notifications', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
     const page = parseIntParam(req.query.page, 1) || 1;
     const pageSize = parseIntParam(req.query.pageSize, 20) || 20;
     const offset = (page - 1) * pageSize;
@@ -283,17 +283,17 @@ router.get('/notifications', authMiddleware, async (req: AuthRequest, res: Respo
       whereClause += ` AND is_read = 0`;
     }
 
-    const countResult = await getOne<any>(
+    const countResult = getOne<any>(
       `SELECT COUNT(*) as total FROM notifications ${whereClause}`,
       params
     );
 
-    const unreadCount = await getOne<any>(
+    const unreadCount = getOne<any>(
       `SELECT COUNT(*) as count FROM notifications WHERE member_id = ? AND is_read = 0`,
       [memberId]
     );
 
-    const list = await getAll<any>(
+    const list = getAll<any>(
       `SELECT * FROM notifications ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
@@ -319,10 +319,10 @@ router.get('/notifications', authMiddleware, async (req: AuthRequest, res: Respo
 
 router.post('/notifications/:id/read', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
     const notificationId = req.params.id;
 
-    const notification = await getOne<any>(
+    const notification = getOne<any>(
       `SELECT * FROM notifications WHERE id = ? AND member_id = ?`,
       [notificationId, memberId]
     );
@@ -331,7 +331,7 @@ router.post('/notifications/:id/read', authMiddleware, async (req: AuthRequest, 
       return fail(res, '通知不存在');
     }
 
-    await runSQL(`UPDATE notifications SET is_read = 1 WHERE id = ?`, [notificationId]);
+    runSQL(`UPDATE notifications SET is_read = 1 WHERE id = ?`, [notificationId]);
 
     return success(res, null, '标记已读成功');
   } catch (err: any) {
@@ -341,9 +341,9 @@ router.post('/notifications/:id/read', authMiddleware, async (req: AuthRequest, 
 
 router.post('/notifications/read-all', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
 
-    await runSQL(`UPDATE notifications SET is_read = 1 WHERE member_id = ? AND is_read = 0`, [memberId]);
+    runSQL(`UPDATE notifications SET is_read = 1 WHERE member_id = ? AND is_read = 0`, [memberId]);
 
     return success(res, null, '全部标记已读成功');
   } catch (err: any) {
