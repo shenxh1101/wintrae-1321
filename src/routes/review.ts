@@ -3,14 +3,14 @@ import dayjs from 'dayjs';
 import { v4 as uuidv4 } from 'uuid';
 import { AuthRequest, authMiddleware, optionalAuthMiddleware } from '../middleware/auth';
 import { success, fail, paginated } from '../utils/response';
-import { getOne, getAll, runSQL, beginTransaction, commit, rollback } from '../database';
+import { getOne, getAll, runSQL, transaction } from '../database';
 import { changePoints, parseIntParam } from '../utils/helpers';
 
 const router = Router();
 
 router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
     const { bookingId, rating, content, images } = req.body;
 
     if (!bookingId) {
@@ -21,11 +21,16 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       return fail(res, '请提供1-5分的评分');
     }
 
-    const booking = await getOne<any>(
-      `SELECT b.*, cs.coach_id, cs.schedule_id, c.name as course_name, cs.date, cs.start_time
+    const booking = getOne<any>(
+      `SELECT b.*, cs.coach_id, cs.schedule_id, cs.date, cs.start_time, cs.end_time,
+              c.id as course_id, c.name as course_name, c.type as course_type, c.duration,
+              co.name as coach_name, co.avatar as coach_avatar,
+              s.name as store_name
        FROM bookings b
        INNER JOIN coach_schedules cs ON b.schedule_id = cs.id
        INNER JOIN courses c ON cs.course_id = c.id
+       INNER JOIN coaches co ON cs.coach_id = co.id
+       INNER JOIN stores s ON cs.store_id = s.id
        WHERE b.id = ? AND b.member_id = ?`,
       [bookingId, memberId]
     );
@@ -38,63 +43,82 @@ router.post('/', authMiddleware, async (req: AuthRequest, res: Response) => {
       return fail(res, '请先完成签到后再评价');
     }
 
-    const existingReview = await getOne<any>(
+    const existingReview = getOne<any>(
       `SELECT id FROM reviews WHERE booking_id = ?`,
       [bookingId]
     );
 
     if (existingReview) {
-      return fail(res, '您已评价过该课程');
+      return fail(res, '您已评价过该课程，请勿重复评价');
     }
 
-    await beginTransaction();
+    const reviewId = uuidv4();
+    const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+    const imagesStr = images && images.length > 0 ? images.join(',') : null;
+    const pointsEarned = 10;
 
-    try {
-      const reviewId = uuidv4();
-      const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
-      const imagesStr = images && images.length > 0 ? images.join(',') : null;
-
-      await runSQL(
+    transaction(() => {
+      runSQL(
         `INSERT INTO reviews (id, booking_id, member_id, schedule_id, coach_id, rating, content, images, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [reviewId, bookingId, memberId, booking.schedule_id, booking.coach_id, rating, content || '', imagesStr, now]
       );
 
-      await runSQL(
+      runSQL(
         `UPDATE bookings SET status = 'completed' WHERE id = ?`,
         [bookingId]
       );
 
-      const coachStats = await getOne<any>(
-        `SELECT AVG(rating) as avg_rating FROM reviews WHERE coach_id = ?`,
+      const coachStats = getOne<any>(
+        `SELECT AVG(rating) as avg_rating, COUNT(*) as review_count FROM reviews WHERE coach_id = ?`,
         [booking.coach_id]
       );
 
       if (coachStats && coachStats.avg_rating) {
-        await runSQL(
+        runSQL(
           `UPDATE coaches SET rating = ROUND(?, 1) WHERE id = ?`,
           [coachStats.avg_rating, booking.coach_id]
         );
       }
+    });
 
-      await commit();
+    changePoints(
+      memberId,
+      pointsEarned,
+      'review',
+      `${booking.date} ${booking.start_time} ${booking.course_name}评价完成，奖励积分`,
+      bookingId
+    );
 
-      await changePoints(
-        memberId,
-        10,
-        'review',
-        `${booking.date} ${booking.start_time} ${booking.course_name}评价完成，奖励积分`,
-        bookingId
-      );
-
-      return success(res, {
-        reviewId,
+    return success(res, {
+      review: {
+        id: reviewId,
+        bookingId,
         rating,
-        pointsEarned: 10
-      }, '评价成功');
-    } catch (txErr) {
-      await rollback();
-      throw txErr;
-    }
+        content: content || '',
+        images: images || [],
+        createdAt: now,
+        course: {
+          id: booking.course_id,
+          name: booking.course_name,
+          type: booking.course_type,
+          date: booking.date,
+          startTime: booking.start_time,
+          endTime: booking.end_time
+        },
+        coach: {
+          id: booking.coach_id,
+          name: booking.coach_name,
+          avatar: booking.coach_avatar
+        },
+        store: {
+          name: booking.store_name
+        }
+      },
+      points: {
+        earned: pointsEarned,
+        description: '完成课程评价奖励'
+      }
+    }, '评价成功');
   } catch (err: any) {
     return fail(res, err.message || '评价失败');
   }

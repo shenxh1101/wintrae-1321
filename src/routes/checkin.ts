@@ -11,7 +11,7 @@ const router = Router();
 
 router.post('/verify', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    const memberId = req.memberId;
+    const memberId = req.memberId!;
     const { checkInCode, scheduleId } = req.body;
 
     if (!checkInCode && !scheduleId) {

@@ -1,25 +1,25 @@
 import { v4 as uuidv4 } from 'uuid';
 import dayjs from 'dayjs';
-import { runSQL, getOne } from '../database';
+import { runSQL, getOne, getAll } from '../database';
 
-export async function changePoints(
+export function changePoints(
   memberId: string,
   change: number,
   type: 'check_in' | 'review' | 'no_show' | 'promotion' | 'other',
   description: string,
   relatedBookingId?: string
-): Promise<void> {
+): void {
   const recordId = uuidv4();
   const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
 
-  await runSQL(`UPDATE members SET points = points + ? WHERE id = ?`, [change, memberId]);
+  runSQL(`UPDATE members SET points = points + ? WHERE id = ?`, [change, memberId]);
 
-  await runSQL(
+  runSQL(
     `INSERT INTO points_records (id, member_id, change, type, description, related_booking_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [recordId, memberId, change, type, description, relatedBookingId || null, now]
   );
 
-  await createNotification(
+  createNotification(
     memberId,
     'points',
     change > 0 ? '积分增加通知' : '积分扣除通知',
@@ -27,16 +27,16 @@ export async function changePoints(
   );
 }
 
-export async function createNotification(
+export function createNotification(
   memberId: string,
   type: 'points' | 'booking' | 'waitlist' | 'reminder',
   title: string,
   content: string
-): Promise<void> {
+): void {
   const id = uuidv4();
   const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
 
-  await runSQL(
+  runSQL(
     `INSERT INTO notifications (id, member_id, type, title, content, is_read, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)`,
     [id, memberId, type, title, content, now]
   );
@@ -55,70 +55,139 @@ export function generateBookingNo(): string {
   return dayjs().format('YYYYMMDDHHmmss') + Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
-export async function updateWaitlistPositions(scheduleId: string): Promise<void> {
-  const waitlistBookings = await getOne<any[]>(
-    `SELECT id FROM bookings WHERE schedule_id = ? AND is_waitlist = 1 AND status = 'waitlisted' ORDER BY created_at ASC`,
-    [scheduleId]
-  ) as any;
-
-  const rows = await getOne<any>(
-    `SELECT GROUP_CONCAT(id) as ids FROM bookings WHERE schedule_id = ? AND is_waitlist = 1 AND status = 'waitlisted' ORDER BY created_at ASC`,
+export function updateWaitlistPositions(scheduleId: string): void {
+  const rows = getAll<any>(
+    `SELECT id, member_id FROM bookings WHERE schedule_id = ? AND is_waitlist = 1 AND status = 'waitlisted' ORDER BY created_at ASC`,
     [scheduleId]
   );
 
-  if (rows && rows.ids) {
-    const ids = rows.ids.split(',');
-    for (let i = 0; i < ids.length; i++) {
-      await runSQL(`UPDATE bookings SET waitlist_position = ? WHERE id = ?`, [i + 1, ids[i]]);
-    }
+  for (let i = 0; i < rows.length; i++) {
+    runSQL(`UPDATE bookings SET waitlist_position = ? WHERE id = ?`, [i + 1, rows[i].id]);
   }
 
-  await runSQL(`UPDATE coach_schedules SET waitlist_count = (SELECT COUNT(*) FROM bookings WHERE schedule_id = ? AND is_waitlist = 1 AND status = 'waitlisted') WHERE id = ?`, [scheduleId, scheduleId]);
+  runSQL(
+    `UPDATE coach_schedules SET waitlist_count = ? WHERE id = ?`,
+    [rows.length, scheduleId]
+  );
 }
 
-export async function processWaitlistPromotion(scheduleId: string): Promise<void> {
-  const schedule = await getOne<any>(
-    `SELECT cs.*, (SELECT COUNT(*) FROM bookings WHERE schedule_id = cs.id AND status = 'booked') as actual_booked FROM coach_schedules cs WHERE cs.id = ?`,
+export function getWaitlistFirst(scheduleId: string): any {
+  return getOne<any>(
+    `SELECT b.id, b.member_id, m.remaining_count, m.status, m.membership_end
+     FROM bookings b
+     INNER JOIN members m ON b.member_id = m.id
+     WHERE b.schedule_id = ? AND b.is_waitlist = 1 AND b.status = 'waitlisted'
+     ORDER BY b.created_at ASC
+     LIMIT 1`,
     [scheduleId]
   );
+}
 
-  if (!schedule) return;
+export function processWaitlistPromotion(scheduleId: string, count: number = 1): number {
+  let promotedCount = 0;
 
-  const availableSlots = schedule.capacity - schedule.actual_booked;
-
-  if (availableSlots > 0) {
-    const waitlistRows = await getOne<any>(
-      `SELECT GROUP_CONCAT(id || ':' || member_id) as data FROM bookings WHERE schedule_id = ? AND is_waitlist = 1 AND status = 'waitlisted' ORDER BY created_at ASC LIMIT ?`,
-      [scheduleId, availableSlots]
+  for (let i = 0; i < count; i++) {
+    const schedule = getOne<any>(
+      `SELECT cs.capacity,
+        (SELECT COUNT(*) FROM bookings WHERE schedule_id = cs.id AND status = 'booked') as actual_booked
+       FROM coach_schedules cs WHERE cs.id = ?`,
+      [scheduleId]
     );
 
-    if (waitlistRows && waitlistRows.data) {
-      const items = waitlistRows.data.split(',');
-      for (const item of items) {
-        const [bookingId, memberId] = item.split(':');
-        const checkInCode = generateCheckInCode();
+    if (!schedule) break;
+    if (schedule.actual_booked >= schedule.capacity) break;
 
-        await runSQL(
-          `UPDATE bookings SET status = 'booked', is_waitlist = 0, waitlist_position = NULL, check_in_code = ? WHERE id = ?`,
-          [checkInCode, bookingId]
-        );
+    const firstWaitlist = getWaitlistFirst(scheduleId);
+    if (!firstWaitlist) break;
 
-        await runSQL(
-          `UPDATE coach_schedules SET booked_count = booked_count + 1 WHERE id = ?`,
-          [scheduleId]
-        );
-
-        await createNotification(
-          memberId,
-          'waitlist',
-          '候补成功通知',
-          '恭喜您！您的候补预约已成功转为正式预约，请准时到店签到。'
-        );
-      }
-
-      await updateWaitlistPositions(scheduleId);
+    if (firstWaitlist.status !== 'active') {
+      runSQL(
+        `UPDATE bookings SET status = 'cancelled', cancel_reason = '会员状态异常，候补转正失败' WHERE id = ?`,
+        [firstWaitlist.id]
+      );
+      updateWaitlistPositions(scheduleId);
+      createNotification(
+        firstWaitlist.member_id,
+        'waitlist',
+        '候补转正失败',
+        '很抱歉，由于您的会员状态异常，候补转正失败，已自动退出候补队列。'
+      );
+      continue;
     }
+
+    if (dayjs(firstWaitlist.membership_end).isBefore(dayjs())) {
+      runSQL(
+        `UPDATE bookings SET status = 'cancelled', cancel_reason = '会员已过期，候补转正失败' WHERE id = ?`,
+        [firstWaitlist.id]
+      );
+      updateWaitlistPositions(scheduleId);
+      createNotification(
+        firstWaitlist.member_id,
+        'waitlist',
+        '候补转正失败',
+        '很抱歉，由于您的会员已过期，候补转正失败，已自动退出候补队列。'
+      );
+      continue;
+    }
+
+    if (firstWaitlist.remaining_count <= 0) {
+      runSQL(
+        `UPDATE bookings SET status = 'cancelled', cancel_reason = '剩余次数不足，候补转正失败' WHERE id = ?`,
+        [firstWaitlist.id]
+      );
+      updateWaitlistPositions(scheduleId);
+      createNotification(
+        firstWaitlist.member_id,
+        'waitlist',
+        '候补转正失败',
+        '很抱歉，由于您的剩余次数不足，候补转正失败，已自动退出候补队列。'
+      );
+      continue;
+    }
+
+    const checkInCode = generateCheckInCode();
+    const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+    runSQL(
+      `UPDATE bookings SET status = 'booked', is_waitlist = 0, waitlist_position = NULL, check_in_code = ?, created_at = ? WHERE id = ?`,
+      [checkInCode, now, firstWaitlist.id]
+    );
+
+    runSQL(
+      `UPDATE coach_schedules SET booked_count = booked_count + 1, waitlist_count = waitlist_count - 1 WHERE id = ?`,
+      [scheduleId]
+    );
+
+    runSQL(
+      `UPDATE members SET remaining_count = remaining_count - 1 WHERE id = ?`,
+      [firstWaitlist.member_id]
+    );
+
+    updateWaitlistPositions(scheduleId);
+
+    const scheduleDetail = getOne<any>(
+      `SELECT cs.date, cs.start_time, c.name as course_name, co.name as coach_name, s.name as store_name
+       FROM coach_schedules cs
+       INNER JOIN courses c ON cs.course_id = c.id
+       INNER JOIN coaches co ON cs.coach_id = co.id
+       INNER JOIN stores s ON cs.store_id = s.id
+       WHERE cs.id = ?`,
+      [scheduleId]
+    );
+
+    if (scheduleDetail) {
+      createNotification(
+        firstWaitlist.member_id,
+        'waitlist',
+        '候补成功通知',
+        `恭喜您！${scheduleDetail.date} ${scheduleDetail.start_time} ${scheduleDetail.course_name}（${scheduleDetail.coach_name}教练 - ${scheduleDetail.store_name}）的候补已成功转为正式预约。签到码：${checkInCode}，请准时到店签到。`
+      );
+    }
+
+    promotedCount++;
   }
+
+  return promotedCount;
 }
 
 export function parseBooleanParam(value: any): boolean | undefined {

@@ -22,7 +22,7 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
 
     const scheduleWhere = `WHERE ${scheduleConditions.join(' AND ')}`;
 
-    const scheduleStats = await getOne<any>(
+    const scheduleStats = getOne<any>(
       `SELECT
         COUNT(DISTINCT cs.id) as total_classes,
         SUM(cs.capacity) as total_capacity,
@@ -32,14 +32,14 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
       scheduleParams
     );
 
-    const bookingWhere = `WHERE b.created_at >= ? AND b.created_at <= ?`;
+    let bookingWhere = `WHERE b.created_at >= ? AND b.created_at <= ?`;
     const bookingParams: any[] = [
       dayjs(startDate).startOf('day').format('YYYY-MM-DD HH:mm:ss'),
       dayjs(endDate).endOf('day').format('YYYY-MM-DD HH:mm:ss')
     ];
 
     if (storeId) {
-      const storeScheduleIds = await getOne<any>(
+      const storeScheduleIds = getOne<any>(
         `SELECT GROUP_CONCAT(id) as ids FROM coach_schedules WHERE store_id = ?`,
         [storeId]
       );
@@ -48,10 +48,12 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
         const placeholders = ids.map(() => '?').join(',');
         bookingWhere += ` AND b.schedule_id IN (${placeholders})`;
         bookingParams.push(...ids);
+      } else {
+        bookingWhere += ` AND 1 = 0`;
       }
     }
 
-    const bookingStats = await getOne<any>(
+    const bookingStats = getOne<any>(
       `SELECT
         SUM(CASE WHEN b.status IN ('booked', 'checked_in', 'completed', 'waitlisted') THEN 1 ELSE 0 END) as total_bookings,
         SUM(CASE WHEN b.status IN ('checked_in', 'completed') THEN 1 ELSE 0 END) as total_checkins,
@@ -62,13 +64,21 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
       bookingParams
     );
 
-    const reviewWhere = `WHERE r.created_at >= ? AND r.created_at <= ?`;
+    let reviewWhere = `WHERE r.created_at >= ? AND r.created_at <= ?`;
     const reviewParams: any[] = [
       dayjs(startDate).startOf('day').format('YYYY-MM-DD HH:mm:ss'),
       dayjs(endDate).endOf('day').format('YYYY-MM-DD HH:mm:ss')
     ];
 
-    const reviewStats = await getOne<any>(
+    if (storeId) {
+      reviewWhere += ` AND EXISTS (
+        SELECT 1 FROM coach_schedules cs
+        WHERE cs.id = r.schedule_id AND cs.store_id = ?
+      )`;
+      reviewParams.push(storeId);
+    }
+
+    const reviewStats = getOne<any>(
       `SELECT
         COUNT(*) as total_reviews,
         AVG(r.rating) as avg_rating,
@@ -77,7 +87,7 @@ router.get('/overview', async (req: AuthRequest, res: Response) => {
       reviewParams
     );
 
-    const memberStats = await getOne<any>(
+    const memberStats = getOne<any>(
       `SELECT
         COUNT(*) as total_members,
         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_members,

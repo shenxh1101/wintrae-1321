@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import * as jwt from 'jsonwebtoken';
+import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { unauthorized } from '../utils/response';
 
@@ -11,8 +11,8 @@ export interface AuthRequest extends Request {
 export function generateToken(memberId: string): string {
   return jwt.sign(
     { id: memberId, type: 'member' },
-    config.jwtSecret,
-    { expiresIn: config.jwtExpiresIn }
+    config.jwtSecret as string,
+    { expiresIn: config.jwtExpiresIn } as any
   );
 }
 
